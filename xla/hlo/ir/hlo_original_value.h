@@ -49,6 +49,12 @@ struct OriginalArray {
 
   friend bool operator==(const OriginalArray& lhs, const OriginalArray& rhs);
   friend bool operator!=(const OriginalArray& lhs, const OriginalArray& rhs);
+  friend bool operator<(const OriginalArray& lhs, const OriginalArray& rhs) {
+    if (lhs.instruction_name != rhs.instruction_name) {
+      return lhs.instruction_name < rhs.instruction_name;
+    }
+    return lhs.shape_index < rhs.shape_index;
+  }
 
   template <typename H>
   friend H AbslHashValue(H h, const OriginalArray& original_array) {
