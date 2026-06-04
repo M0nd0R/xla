@@ -1242,7 +1242,53 @@ TEST_F(ShardyXLATest, PreserveOriginalValueRecoveryTable) {
                             expected));
 }
 
-TEST_F(ShardyXLATest, UpdateInlineableAttr) {
+TEST_F(ShardyXLATest, ManualComputationInlineableTrueErasedAndRenamed) {
+  const char* const hloString = R"(
+    HloModule module
+
+    xla.sdy.manual_computation_body {
+      constant.0 = f32[1] constant({0})
+      ROOT tuple.1 = () tuple()
+    }
+
+    ENTRY entry {
+      ROOT call.2 = () call(), to_apply=xla.sdy.manual_computation_body, frontend_attributes={inlineable="true"}
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hloString));
+  runShardy(module.get(), /*stablehloImport=*/false,
+            /*runSdyShardingPropagation=*/false);
+
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kCall);
+  EXPECT_FALSE(root->has_frontend_attributes());
+  EXPECT_EQ(root->to_apply()->name(), "inlineable_callee");
+}
+
+TEST_F(ShardyXLATest, ManualComputationInlineableXlaEarlyErasedAndRenamed) {
+  const char* const hloString = R"(
+    HloModule module
+
+    xla.sdy.manual_computation_body {
+      constant.0 = f32[1] constant({0})
+      ROOT tuple.1 = () tuple()
+    }
+
+    ENTRY entry {
+      ROOT call.2 = () call(), to_apply=xla.sdy.manual_computation_body, frontend_attributes={inlineable="xla_early"}
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hloString));
+  runShardy(module.get(), /*stablehloImport=*/false,
+            /*runSdyShardingPropagation=*/false);
+
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kCall);
+  EXPECT_FALSE(root->has_frontend_attributes());
+  EXPECT_EQ(root->to_apply()->name(), "inlineable_callee");
+}
+
+TEST_F(ShardyXLATest, ManualComputationInlineableFalsePreserved) {
   const char* const hloString = R"(
     HloModule module
 
@@ -1257,12 +1303,41 @@ TEST_F(ShardyXLATest, UpdateInlineableAttr) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
   runShardy(module.get(), /*stablehloImport=*/false,
-            /*runSdyShardingPropagation=*/false);
+            /*runSdyShardingPropagation=*/false, /*expectChanged=*/false);
 
   HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_EQ(root->opcode(), HloOpcode::kCall);
-  EXPECT_FALSE(root->has_frontend_attributes());
-  EXPECT_EQ(root->to_apply()->name(), "inlineable_callee");
+  EXPECT_TRUE(root->has_frontend_attributes());
+  auto it = root->frontend_attributes().map().find("inlineable");
+  EXPECT_NE(it, root->frontend_attributes().map().end());
+  EXPECT_EQ(it->second, "false");
+  EXPECT_EQ(root->to_apply()->name(), "xla.sdy.manual_computation_body");
+}
+
+TEST_F(ShardyXLATest, ManualComputationInlineableAutoPreserved) {
+  const char* const hloString = R"(
+    HloModule module
+
+    xla.sdy.manual_computation_body {
+      constant.0 = f32[1] constant({0})
+      ROOT tuple.1 = () tuple()
+    }
+
+    ENTRY entry {
+      ROOT call.2 = () call(), to_apply=xla.sdy.manual_computation_body, frontend_attributes={inlineable="auto"}
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hloString));
+  runShardy(module.get(), /*stablehloImport=*/false,
+            /*runSdyShardingPropagation=*/false, /*expectChanged=*/false);
+
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kCall);
+  EXPECT_TRUE(root->has_frontend_attributes());
+  auto it = root->frontend_attributes().map().find("inlineable");
+  EXPECT_NE(it, root->frontend_attributes().map().end());
+  EXPECT_EQ(it->second, "auto");
+  EXPECT_EQ(root->to_apply()->name(), "xla.sdy.manual_computation_body");
 }
 
 TEST_F(ShardyXLATest, ManualComputationCallOpWithToken) {

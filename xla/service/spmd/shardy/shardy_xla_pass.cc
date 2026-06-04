@@ -436,18 +436,21 @@ bool eraseInlineableAttrForShardyManualComputations(HloModule* module) {
   for (HloComputation* computation : module->computations()) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (instruction->opcode() == HloOpcode::kCall &&
-          instruction->frontend_attributes().map().contains(
-              kXlaInlineableAttr) &&
           absl::StrContains(instruction->to_apply()->name(),
                             sdy::kManualComputationFuncName.str())) {
-        instruction->erase_frontend_attribute(kXlaInlineableAttr);
-        // TODO(b/436603025). CallInliner do not inline the Shardy related
-        // manual computations based on the callee name. We have to rename the
-        // callee to a name such that it can be inlined. If we can remove the
-        // special handling in CallInliner, we can remove this renaming.
-        module->SetAndUniquifyComputationName(instruction->to_apply(),
-                                              "inlineable_callee");
-        changed = true;
+        auto it =
+            instruction->frontend_attributes().map().find(kXlaInlineableAttr);
+        if (it != instruction->frontend_attributes().map().end() &&
+            (it->second == "true" || it->second == "xla_early")) {
+          instruction->erase_frontend_attribute(kXlaInlineableAttr);
+          // TODO(b/436603025). CallInliner do not inline the Shardy related
+          // manual computations based on the callee name. We have to rename the
+          // callee to a name such that it can be inlined. If we can remove the
+          // special handling in CallInliner, we can remove this renaming.
+          module->SetAndUniquifyComputationName(instruction->to_apply(),
+                                                "inlineable_callee");
+          changed = true;
+        }
       }
     }
   }
