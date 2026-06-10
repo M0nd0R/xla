@@ -235,6 +235,19 @@ class PresetAssignments {
 
   PresetAssignments() = default;
 
+  std::unique_ptr<PresetAssignments> ClonePresetAssignments() const {
+    auto clone = std::make_unique<PresetAssignments>();
+    clone->chunks_ = chunks_;
+    clone->scoped_allocation_chunks_ = scoped_allocation_chunks_;
+    clone->post_module_scoped_alternate_memory_chunk_ =
+        post_module_scoped_alternate_memory_chunk_;
+    clone->assignment_info_ = assignment_info_;
+    clone->buffer_info_str_ = buffer_info_str_;
+    clone->allocation_info_str_ = allocation_info_str_;
+    clone->instruction_schedule_str_ = instruction_schedule_str_;
+    return clone;
+  }
+
   void add_chunk(const HloPosition& position,
                  const HeapSimulator::Chunk& chunk) {
     chunks_.emplace_back(position, chunk);
