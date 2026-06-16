@@ -374,6 +374,73 @@ diff --ruN a/stablehlo/stablehlo/dialect/VhloOps.cpp b/stablehlo/stablehlo/diale
  }
  
  }  // namespace vhlo
+diff --ruN a/stablehlo/stablehlo/reference/Api.cpp b/stablehlo/stablehlo/reference/Api.cpp
+--- stablehlo/stablehlo/reference/Api.cpp
++++ stablehlo/stablehlo/reference/Api.cpp
+@@ -123,7 +123,7 @@
+ 
+       SymbolTable symbolTable{op.getParentOfType<ModuleOp>()};
+       auto results = stablehlo::interpreter::evalRunParallelOp(
+-          runtimeOperands, infeed, programs, symbolTable);
++          runtimeOperands, infeed, programs, symbolTable, this);
+       scope.add(runParallelOp.getResults(), results);
+       return wrapFallbackStatus(llvm::Error::success(), funcName,
+                                 "interpreter.run_parallel");
+diff --ruN a/stablehlo/stablehlo/reference/InterpreterOps.cpp b/stablehlo/stablehlo/reference/InterpreterOps.cpp
+--- stablehlo/stablehlo/reference/InterpreterOps.cpp
++++ stablehlo/stablehlo/reference/InterpreterOps.cpp
+@@ -171,7 +171,8 @@
+ 
+ SmallVector<InterpreterValue> evalRunParallelOp(
+     ArrayRef<InterpreterValue> inputs, std::queue<StringAttr>& infeed,
+-    SmallVector<SmallVector<StringAttr>> programs, SymbolTable& symbolTable) {
++    SmallVector<SmallVector<StringAttr>> programs, SymbolTable& symbolTable,
++    InterpreterFallback* fallback) {
+   llvm::DefaultThreadPool threadPool;
+   SmallVector<std::shared_future<SmallVector<InterpreterValue>>> futures;
+ 
+@@ -188,7 +189,7 @@
+       auto evalWrapper = [&](Region& region, ArrayRef<InterpreterValue> args,
+                              ProcessId processId) {
+         Process process{processId, &processGrid};
+-        return eval(region, args, /*config=*/nullptr, &process,
++        return eval(region, args, fallback, &process,
+                     /*parent=*/nullptr);
+       };
+ 
+@@ -208,6 +209,9 @@
+ }
+ 
+ llvm::Error evalPrintOp(PrintOp& op, InterpreterValue operand) {
++  static std::mutex printing_lock;
++  std::lock_guard<std::mutex> lock(printing_lock);
++
+   std::string ssaValueStr;
+   llvm::raw_string_ostream stream(ssaValueStr);
+   stream << op.getOperand();
+diff --ruN a/stablehlo/stablehlo/reference/InterpreterOps.h b/stablehlo/stablehlo/reference/InterpreterOps.h
+--- stablehlo/stablehlo/reference/InterpreterOps.h
++++ stablehlo/stablehlo/reference/InterpreterOps.h
+@@ -26,6 +26,7 @@
+ #include "stablehlo/reference/Value.h"
+ 
+ #define GET_OP_CLASSES
++#include "stablehlo/reference/Configuration.h"
+ #include "stablehlo/reference/InterpreterOps.h.inc"
+ 
+ namespace mlir {
+@@ -39,8 +40,9 @@
+ };
+ 
+ SmallVector<InterpreterValue> evalRunParallelOp(
+-    ArrayRef<InterpreterValue> inputs, std::queue<StringAttr> &infeed,
+-    SmallVector<SmallVector<StringAttr>> programs, SymbolTable &symbolTable);
++    ArrayRef<InterpreterValue> inputs, std::queue<StringAttr>& infeed,
++    SmallVector<SmallVector<StringAttr>> programs, SymbolTable& symbolTable,
++    InterpreterFallback* fallback);
+ 
+ // Print the SSA name followed by its type and value like:
+ // >>> %0 = tensor<i1> {
 diff --ruN a/stablehlo/stablehlo/reference/Ops.h b/stablehlo/stablehlo/reference/Ops.h
 --- stablehlo/stablehlo/reference/Ops.h
 +++ stablehlo/stablehlo/reference/Ops.h
@@ -2592,6 +2659,45 @@ diff --ruN a/stablehlo/stablehlo/tests/interpret/chlo/scan.mlir b/stablehlo/stab
 +  check.expect_eq_const %0#1, dense<[0, 0, 2, 2, 4]> : tensor<5xi32>
 +  check.expect_eq_const %0#2, dense<5> : tensor<i32>
 +  check.expect_eq_const %0#3, dense<4> : tensor<i32>
++  func.return
++}
+diff --ruN a/stablehlo/stablehlo/tests/interpret/printing.mlir b/stablehlo/stablehlo/tests/interpret/printing.mlir
+--- stablehlo/stablehlo/tests/interpret/printing.mlir
++++ stablehlo/stablehlo/tests/interpret/printing.mlir
+@@ -123,3 +123,35 @@
+   %complex_f64 = stablehlo.constant dense<(3.140000e+00, 1.0)> : tensor<4xcomplex<f64>>
+   func.return %complex_f32, %complex_f64 : tensor<4xcomplex<f32>>, tensor<4xcomplex<f64>>
+ }
++
++// -----
++
++// This test checks that printing works correctly when called from multiple
++// threads in parallel using the `interpreter.run_parallel` op.
++//
++// By "correctly", we mean the following:-
++// 1. `interpreter.print` is recognised as a valid op within the
++//    `interpreter.run_parallel` context (no "Unsupported op" errors).
++// 2. The outputs of different threads are not interleaved, i.e., each output of
++//    an `interpreter.print` is completed before the other thread's output is
++//    printed.
++
++func.func @iota_printing_called_inside_run_parallel() -> tensor<2xi32> {
++  %0 = stablehlo.iota dim = 0 : tensor<2xi32>
++  interpreter.print %0 : tensor<2xi32>
++  return %0 : tensor<2xi32>
++}
++
++func.func @main() {
++  // CHECK:      %0 = tensor<2xi32> {
++  // CHECK-NEXT:   [0, 1]
++  // CHECK-NEXT: }
++  // CHECK:      %0 = tensor<2xi32> {
++  // CHECK-NEXT:   [0, 1]
++  // CHECK-NEXT: }
++
++  %results:2 = "interpreter.run_parallel"() {
++    programs = [[@iota_printing_called_inside_run_parallel, @iota_printing_called_inside_run_parallel]]
++  } : () -> (tensor<2xi32>, tensor<2xi32>)
 +  func.return
 +}
 diff --ruN a/stablehlo/stablehlo/tests/ops_chlo.mlir b/stablehlo/stablehlo/tests/ops_chlo.mlir
