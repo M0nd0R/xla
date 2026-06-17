@@ -238,12 +238,27 @@ absl::Status LogicalBufferAnalysis::HandleAsyncStart(
 
   ShapeUtil::ForEachSubshape(
       async_start->shape(), [&](const Shape& shape, const ShapeIndex& index) {
-        bool has_implicit_alias = (index.size() >= 2 && index.front() == 0);
+        bool has_implicit_alias = (index.size() >= 2 && index.front() == 0) ||
+                                  (!index.empty() && index.front() == 1);
         bool has_explicit_alias = aliased_outputs.contains(index);
         if (!has_implicit_alias && !has_explicit_alias) {
           NewLogicalBuffer(async_start, index);
         }
       });
+  return absl::OkStatus();
+}
+
+absl::Status LogicalBufferAnalysis::HandleAsyncUpdate(
+    HloInstruction* async_update) {
+  // AsyncUpdate only creates the top-level tuple buffer.
+  NewLogicalBuffer(async_update, /*index=*/{});
+  return absl::OkStatus();
+}
+
+absl::Status LogicalBufferAnalysis::HandleAsyncDone(
+    HloInstruction* async_done) {
+  // The output of AsyncDone aliases with the root of the called computation.
+  // AsyncDone doesn't create any buffers.
   return absl::OkStatus();
 }
 
