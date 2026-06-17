@@ -80,6 +80,7 @@ limitations under the License.
 #include "xla/hlo/builder/lib/math.h"
 #include "xla/hlo/builder/lib/matrix.h"  // IWYU pragma: keep
 #include "xla/hlo/builder/lib/slicing.h"
+#include "xla/hlo/builder/lib/sorting.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
@@ -4413,7 +4414,22 @@ LogicalResult ExportXlaOp(TopKOp op, OpLoweringContext ctx) {
   xla::XlaOp operand;
   if (failed(GetXlaOp(op.getOperand(), value_map, &operand, op)))
     return failure();
-  auto topk = xla::TopK(operand, op.getK(), op.getLargest());
+
+  xla::XlaOp topk;
+  auto operand_shape = ctx.builder->GetShape(operand);
+  if (!operand_shape.ok()) {
+    return failure();
+  }
+
+  // Use packed sort optimization if largest=true and input is BF16.
+  // Note: sorting.h's xla::TopK only supports largest=true (descending).
+  if (op.getLargest() && operand_shape->element_type() == xla::BF16) {
+    auto index_type =
+        xla::TypeToShape(op.getIndices().getType()).element_type();
+    topk = xla::TopK(operand, op.getK(), index_type);
+  } else {
+    topk = xla::TopK(operand, op.getK(), op.getLargest());
+  }
 
   // Untuple the two results of XLA's topk.
   BuildGetTupleElementsForTupleResults(op, topk, ctx);

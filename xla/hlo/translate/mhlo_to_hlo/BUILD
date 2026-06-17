@@ -205,6 +205,7 @@ cc_library(
         "//xla/hlo/builder/lib:matrix",
         "//xla/hlo/builder/lib:quantize",
         "//xla/hlo/builder/lib:slicing",
+        "//xla/hlo/builder/lib:sorting",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/translate/hlo_to_mhlo:hlo_utils",
