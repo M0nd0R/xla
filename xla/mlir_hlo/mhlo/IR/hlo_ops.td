@@ -3367,7 +3367,8 @@ def MHLO_TopKOp : MHLO_Op<"topk", [RecursiveMemoryEffects, InferTensorType]> {
   let arguments = (ins
     MHLO_Tensor:$operand,
     I64Attr:$k,
-    DefaultValuedOptionalAttr<BoolAttr, "true">:$largest
+    DefaultValuedOptionalAttr<BoolAttr, "true">:$largest,
+    DefaultValuedOptionalAttr<BoolAttr, "true">:$is_stable
   );
   let results = (outs MHLO_Tensor:$values,
                       MHLO_Tensor:$indices);
@@ -4169,4 +4170,3 @@ def MHLO_MinimumBroadcastShapesOp : CppDeprecated<"Do not use this op outside of
 }
 
 #endif // MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS
-
