@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <iostream>
+#include <sstream>
+#include <streambuf>
 #include <string>
 
 #include <gmock/gmock.h>
@@ -23,9 +26,12 @@ limitations under the License.
 #include "riegeli/base/maker.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/service/gpu/dense_data_intermediate.pb.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.pb.h"
+#include "xla/stream_executor/device_description.pb.h"
 #include "xla/tools/split_proto/split_proto_cli.pb.h"
 #include "xla/tools/split_proto/split_proto_cli_lib.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
@@ -39,6 +45,8 @@ namespace xla::split_proto_cli {
 namespace {
 
 using ::absl_testing::StatusIs;
+using ::testing::HasSubstr;
+using ::testing::Not;
 using ::tsl::proto_testing::EqualsProto;
 using ::tsl::proto_testing::ParseTextProtoOrDie;
 using ::tsl::proto_testing::Partially;
@@ -250,6 +258,64 @@ TEST(SplitProtoCliTest, PackAndUnpackAotBinaryRoundTrip) {
               Partially(EqualsProto(initial_inner_proto)));
   EXPECT_THAT(final_proto.executable_and_options().compile_options(),
               Partially(EqualsProto(initial_outer_proto.compile_options())));
+}
+
+TEST(SplitProtoCliTest, InfoCommandPrintsCorrectDetails) {
+  auto gpu_exec = ParseTextProtoOrDie<gpu::GpuExecutableProto>(R"pb(
+    module_name: "test_module"
+    gpu_compute_capability { cuda_compute_capability { major: 8 minor: 0 } }
+    thunks { kernel_thunk { kernel_name: "my_kernel_123" } }
+    thunks { copy_thunk {} }
+    thunks { async_done_thunk {} }
+    thunks { custom_call_thunk { target_name: "my_custom_call_456" } }
+    thunks {
+      custom_kernel_thunk { custom_kernel { name: "my_custom_kernel_789" } }
+    }
+    thunks {
+      sequential_thunk {
+        thunks { kernel_thunk { kernel_name: "nested_kernel.999" } }
+      }
+    }
+    thunks {
+      async_start_thunk {
+        thunks {
+          thunks { kernel_thunk { kernel_name: "async_nested_kernel_111" } }
+        }
+      }
+    }
+  )pb");
+
+  ExecutableAndOptionsProto initial_proto;
+  ASSERT_OK(WriteSplitGpuExecutable(
+      gpu_exec, riegeli::Maker<riegeli::StringWriter>(
+                    initial_proto.mutable_serialized_executable())));
+  *initial_proto.mutable_compile_options() =
+      ParseTextProtoOrDie<CompileOptionsProto>(R"pb(
+        target_config { gpu_device_info { threads_per_block_limit: 1024 } }
+      )pb");
+
+  std::string serialized_exec_and_opts;
+  ASSERT_OK(WriteSplitExecutableAndOptions(
+      initial_proto,
+      riegeli::Maker<riegeli::StringWriter>(&serialized_exec_and_opts)));
+
+  std::stringstream buffer;
+  std::streambuf* old = std::cout.rdbuf(buffer.rdbuf());
+  ASSERT_OK(
+      Info(riegeli::Maker<riegeli::StringReader>(serialized_exec_and_opts)));
+  std::cout.rdbuf(old);
+
+  std::string output = buffer.str();
+  EXPECT_THAT(output, HasSubstr("Module Name: test_module"));
+  EXPECT_THAT(output, HasSubstr("threads_per_block_limit: 1024"));
+  EXPECT_THAT(output, HasSubstr("kernel_thunk (my_kernel)"));
+  EXPECT_THAT(output, HasSubstr("custom_call_thunk (my_custom_call)"));
+  EXPECT_THAT(output, HasSubstr("custom_kernel_thunk (my_custom_kernel)"));
+  EXPECT_THAT(output, HasSubstr("kernel_thunk (nested_kernel)"));
+  EXPECT_THAT(output, Not(HasSubstr("copy_thunk")));
+  EXPECT_THAT(output, Not(HasSubstr("async_done_thunk")));
+  EXPECT_THAT(output, Not(HasSubstr("async_start_thunk")));
+  EXPECT_THAT(output, Not(HasSubstr("async_nested_kernel")));
 }
 
 }  // namespace

@@ -57,7 +57,7 @@ Subcommands:
                      manifest.
   pack:              Converts a standard protobuf (text or binary) into a split
                      proto. Requires `--proto_type` to identify the message type
-
+  info:              Prints useful details about an AOT binary to stdout.
 
 Usage:
   # Convert an AOT binary into a textproto, so that you can inspect the
@@ -72,6 +72,9 @@ Usage:
 
   # Unpack a split proto into a standard proto (text or binary).
   split-proto-cli unpack aot_binary.riegeli
+
+  # Print useful details about an AOT binary to stdout.
+  split-proto-cli info aot_binary.riegeli
 
 Input/Output:
   If the input file is omitted or '-', it reads from stdin.
@@ -182,6 +185,8 @@ absl::Status RunMain(int argc, char** argv) {
     RETURN_IF_ERROR(parse_format(output_format_str, &options.output_format));
 
     status = UnpackAot(std::move(reader), std::move(writer), options);
+  } else if (subcommand == "info") {
+    status = Info(std::move(reader));
   } else {
     return absl::InvalidArgumentError(
         absl::StrCat("Unknown subcommand: ", subcommand));
