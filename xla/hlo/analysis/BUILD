@@ -584,6 +584,21 @@ xla_cc_test(
     ],
 )
 
+xla_cc_test(
+    name = "logical_buffer_analysis_test",
+    srcs = ["logical_buffer_analysis_test.cc"],
+    deps = [
+        ":logical_buffer_analysis",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:test",
+        "//xla/service:logical_buffer",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "interval",
     srcs = ["interval.cc"],
